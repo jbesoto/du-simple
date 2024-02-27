@@ -56,11 +56,11 @@ int main(int argc, char *argv[]) {
 uint64_t du(const char *rootpath) {
     // TODO: Program should be able to take regular file paths as input
     struct stat statbuf;
-
     uint64_t total = 0;
+    
     DIR *dirp = opendir(rootpath);
     if (!dirp) {
-        fprintf(stderr, "Could not open directory '%s': %s", rootpath, strerror(errno));
+        fprintf(stderr, "Error: Could not open directory '%s': %s\n", rootpath, strerror(errno));
         return (uint64_t)-1;
     }
 
@@ -74,13 +74,13 @@ uint64_t du(const char *rootpath) {
         // Append file name to root path 
         char pathname[PATH_MAX];
         if (snprintf(pathname, PATH_MAX, "%s/%s", rootpath, direntp->d_name) < 0) {
-            fprintf(stderr, "Failed to generate pathname string\n");
+            fprintf(stderr, "Error: Failed to generate pathname for '%s/%s'\n", rootpath, direntp->d_name);
             closedir(dirp);
             return (uint64_t)-1;
         }
 
         if (lstat(pathname, &statbuf) < 0) {
-            fprintf(stderr, "Failed to get stat on '%s': %s\n", pathname, strerror(errno));
+            fprintf(stderr, "Error: Failed to get stat for '%s': %s\n", pathname, strerror(errno));
             closedir(dirp);
             return (uint64_t)-1;
         }
@@ -103,24 +103,22 @@ uint64_t du(const char *rootpath) {
                 continue;
         }
     }
+    closedir(dirp);
 
     if (lstat(rootpath, &statbuf) < 0) {
         fprintf(stderr, "Failed to get stat on '%s': %s\n", rootpath, strerror(errno));
-        closedir(dirp);
         return (uint64_t)-1;
     }
-
     total += statbuf.st_blocks / 2;
     PrintDiskUsage(total, rootpath);
-    closedir(dirp);
 
     return total;
 }
 
 void PrintUsage(const char *cmd) {
     fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
-    printf("Options:\n");
-    printf("    -a    write counts for all files, not just directories\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "    -a    write counts for all files, not just directories\n");
 }
 
 void PrintDiskUsage(uint64_t disk_usage, const char *path) {
