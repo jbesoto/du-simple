@@ -10,6 +10,7 @@
 
 extern int optind;
 
+static const int kMaxArgs = 3;
 static int include_files = 0;
 
 uint64_t du(const char *rootpath);
@@ -18,7 +19,7 @@ void PrintDiskUsage(uint64_t disk_usage, const char *path);
 
 int main(int argc, char *argv[]) {
     // TODO: Sloppy parsing, if two filenames are passed, program still accepts it
-    if (argc > 3) {
+    if (argc > kMaxArgs) {
         PrintUsage(argv[0]);
         return EXIT_FAILURE;
     }
@@ -36,6 +37,12 @@ int main(int argc, char *argv[]) {
             }
 
         }
+    }
+
+    // More than one file provided
+    if (argc - optind > 1) {
+        PrintUsage(argv[0]);
+        return EXIT_FAILURE;
     }
 
     const char *pathname = (optind < argc) ? argv[optind] : ".";
