@@ -84,6 +84,7 @@ uint64_t du(const char *rootpath) {
                 total += du(pathname);
                 break;
             }
+            case S_IFLNK:
             case S_IFREG: {
                 total += disk_usage_kb;
                 if (include_files) {
@@ -91,7 +92,7 @@ uint64_t du(const char *rootpath) {
                 }
                 continue;
             }
-            default:  // S_IFLNK
+            default:
                 continue;
         }
     }
