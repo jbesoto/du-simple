@@ -62,9 +62,29 @@ failed=0
 make > /dev/null 2>&1
 
 if exists ./tests/* ; then
+    echo "Running testcases without options..."
     for dir in ./tests/* ; do
         ./du ${dir} > output.txt
         du ${dir} > expected.txt
+
+        diff output.txt expected.txt > diff.txt
+        if [ $? -eq 0 ]; then
+            pmsg="PASS"
+            passed=$((passed + 1))
+        else
+            pmsg="FAIL"
+            failed=$((failed + 1))
+        fi
+        [ "${pmsg}" = "PASS" ] && rowcolor=${GREEN} || rowcolor=${RED}
+        printf "${rowcolor}%-50s %-5s${RESET}\n" "$(basename "${dir}")" "${pmsg}"
+        cat diff.txt
+    done
+    
+    echo
+    echo "Running testcases with '-a' option..."
+    for dir in ./tests/* ; do
+        ./du -a ${dir} > output.txt
+        du -a ${dir} > expected.txt
 
         diff output.txt expected.txt > diff.txt
         if [ $? -eq 0 ]; then
