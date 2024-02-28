@@ -1,3 +1,10 @@
+// du.c
+//
+// Author: Juan Diego Becerra (jdb9056@nyu.edu)
+// Brief:  Basic implementation of a disk usage reporting tool similar to 'du' command.
+//         Supports the `-a` option to include files in the usage report, not
+//         just directories.
+
 #include <stdio.h>    // fprintf, printf, snprintf
 #include <dirent.h>   // opendir, readdir, closedir, dirent
 #include <sys/stat.h> // lstat, stat, S_IFMT, S_IFDIR, S_IFREG
@@ -18,8 +25,8 @@ uint64_t dfs(const char *rootpath, int *error);
 static inline void PrintUsage(const char *cmd);
 static inline void PrintDiskUsage(uint64_t disk_usage, const char *path);
 
+// Parses command-line arguments and calls the `du` function accordingly.
 int main(int argc, char *argv[]) {
-    // TODO: Sloppy parsing, if two filenames are passed, program still accepts it
     if (argc > kMaxArgs) {
         PrintUsage(argv[0]);
         return EXIT_FAILURE;
@@ -54,6 +61,19 @@ int main(int argc, char *argv[]) {
     return EXIT_SUCCESS;
 }
 
+// Calculates the disk usage of a directory or file.
+//
+// This function computes the disk usage of the directory or file specified
+// by `rootpath`. It logs an error message to stderr if it encounters an error
+// during the calculation.
+//
+// Args:
+//   rootpath: A pointer to a char array that contains the path of the
+//             directory or file whose disk usage is to be calculated.
+//
+// Returns:
+//   An integer indicating the success or failure of the operation:
+//   0 on success, -1 on failure.
 int du(const char *rootpath) {
     int error = 0;
     dfs(rootpath, &error);
@@ -66,6 +86,21 @@ int du(const char *rootpath) {
     return 0;
 }
 
+// Performs a depth-first search to calculate disk usage.
+//
+// Recursively calculates the disk usage of a directory and its contents or
+// a single file. This function is designed to be called by `du` and updates
+// the `error` variable if an error occurs during the calculation.
+//
+// Args:
+//   rootpath: A pointer to a char array that contains the path of the
+//             directory or file to calculate disk usage for.
+//   error: A pointer to an int that will be updated with the error code
+//          (errno) if an error occurs during disk usage calculation.
+//
+// Returns:
+//   The total disk usage in kilobytes (KB) of the directory or file
+//   specified by `rootpath`. Returns 0 and sets `error` if an error occurs.
 uint64_t dfs(const char *rootpath, int *error) {
     struct stat statbuf;    
     uint64_t disk_usage_kb;
@@ -78,7 +113,7 @@ uint64_t dfs(const char *rootpath, int *error) {
 
     disk_usage_kb = statbuf.st_blocks / 2;
     
-    // du was called on a regular file
+    // Handle case where `rootpath` is a regular file
     if (!S_ISDIR(statbuf.st_mode)) {
         PrintDiskUsage(disk_usage_kb, rootpath);
         return disk_usage_kb;
@@ -129,12 +164,26 @@ uint64_t dfs(const char *rootpath, int *error) {
     return total;
 }
 
+// Prints the usage message for the program.
+//
+// Args:
+//   cmd: A pointer to a C-string containing the name of the command or
+//        program being executed.
 static inline void PrintUsage(const char *cmd) {
     fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "    -a    write counts for all files, not just directories\n");
 }
 
+// Prints the disk usage of a file or directory.
+//
+// Outputs the disk usage in kilobytes (KB) and the path of the file or
+// directory to stdout.
+//
+// Args:
+//   disk_usage: The disk usage in kilobytes (KB) of the file or directory.
+//   path: A pointer to a C-string containing the path of the file or
+//         directory whose disk usage is being reported.
 static inline void PrintDiskUsage(uint64_t disk_usage, const char *path) {
     printf("%ld\t%s\n", disk_usage, path);
 }
