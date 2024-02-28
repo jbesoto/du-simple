@@ -151,11 +151,12 @@ uint64_t dfs(const char *rootpath, int *error) {
             if (*error) {
                 break;
             }
-        } else if (S_ISLNK(statbuf.st_mode) || S_ISREG(statbuf.st_mode)) {
+        } else if (S_ISREG(statbuf.st_mode)) {
             total += disk_usage_kb;
-            if (include_files) {
-                PrintDiskUsage(disk_usage_kb, pathname);
-            }
+        }
+        
+        if (include_files && !S_ISDIR(statbuf.st_mode)) {
+            PrintDiskUsage(disk_usage_kb, pathname);
         }
     }
     closedir(dirp);
