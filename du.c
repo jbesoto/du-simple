@@ -15,8 +15,8 @@ static int include_files = 0;
 
 int du(const char *rootpath);
 uint64_t dfs(const char *rootpath, int *error);
-void PrintUsage(const char *cmd);
-void PrintDiskUsage(uint64_t disk_usage, const char *path);
+static inline void PrintUsage(const char *cmd);
+static inline void PrintDiskUsage(uint64_t disk_usage, const char *path);
 
 int main(int argc, char *argv[]) {
     // TODO: Sloppy parsing, if two filenames are passed, program still accepts it
@@ -129,12 +129,12 @@ uint64_t dfs(const char *rootpath, int *error) {
     return total;
 }
 
-void PrintUsage(const char *cmd) {
+static inline void PrintUsage(const char *cmd) {
     fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "    -a    write counts for all files, not just directories\n");
 }
 
-void PrintDiskUsage(uint64_t disk_usage, const char *path) {
+static inline void PrintDiskUsage(uint64_t disk_usage, const char *path) {
     printf("%ld\t%s\n", disk_usage, path);
 }
