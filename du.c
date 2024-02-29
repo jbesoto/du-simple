@@ -1,33 +1,33 @@
 // du.c
 //
 // Author: Juan Diego Becerra (jdb9056@nyu.edu)
-// Brief:  Basic implementation of a disk usage reporting tool similar to 'du' command.
-//         Supports the `-a` option to include files in the usage report, not
-//         just directories.
+// Brief:  Basic implementation of a disk usage reporting tool similar to 'du'
+//         command. Supports the `-a` option to include files in the usage
+//         report, not just directories.
 
-#include <stdio.h>     // fprintf, printf, snprintf
-#include <dirent.h>    // opendir, readdir, closedir, dirent
-#include <sys/types.h> // ino_t
-#include <sys/stat.h>  // lstat, stat, S_IFMT, S_IFDIR, S_IFREG
-#include <stdlib.h>    // EXIT_FAILURE, EXIT_SUCCESS
-#include <string.h>    // strerror, strcmp
-#include <unistd.h>    // getopt, optind
-#include <errno.h>     // errno
+#include <dirent.h>     // opendir, readdir, closedir, dirent
+#include <errno.h>      // errno
+#include <stdio.h>      // fprintf, printf, snprintf
+#include <stdlib.h>     // EXIT_FAILURE, EXIT_SUCCESS
+#include <string.h>     // strerror, strcmp
+#include <sys/stat.h>   // lstat, stat, S_IFMT, S_IFDIR, S_IFREG
+#include <sys/types.h>  // ino_t
+#include <unistd.h>     // getopt, optind
 
 extern int optind;
 
 static const size_t kPathMax = 512;  // bytes
 static const int kMaxArgs = 3;
-static int include_files = 0;
 
 typedef struct DynamicArray {
-    size_t size;
-    size_t len;
-    void *data;
+  size_t size;
+  size_t len;
+  void *data;
 } DynamicArray;
 
-int du(const char *rootpath);
-blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error);
+int du(const char *rootpath, int include_files);
+blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error,
+             int include_files);
 DynamicArray *InitDynamicArray(size_t size, size_t type_size);
 void FreeDynamicArray(DynamicArray *da);
 ino_t *SearchInode(DynamicArray *da, ino_t ino);
@@ -37,43 +37,43 @@ static inline void PrintDiskUsage(blkcnt_t disk_usage, const char *path);
 
 // Parses command-line arguments and calls the `du` function accordingly.
 int main(int argc, char *argv[]) {
-    if (argc > kMaxArgs) {
+  if (argc > kMaxArgs) {
+    PrintUsage(argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  int include_files = 0;
+  int opt;
+  while ((opt = getopt(argc, argv, "a")) != -1) {
+    switch (opt) {
+      case 'a': {
+        include_files = 1;
+        break;
+      }
+      default: {
         PrintUsage(argv[0]);
         return EXIT_FAILURE;
+      }
     }
+  }
 
-    int opt;
-    while ((opt = getopt(argc, argv, "a")) != -1) {
-        switch (opt) {
-            case 'a': {
-                include_files = 1;
-                break;
-            }
-            default: {
-                PrintUsage(argv[0]);
-                return EXIT_FAILURE;
-            }
+  // More than one file provided
+  if (argc - optind > 1) {
+    PrintUsage(argv[0]);
+    return EXIT_FAILURE;
+  }
 
-        }
-    }
+  const char *pathname = (optind < argc) ? argv[optind] : ".";
+  if (du(pathname, include_files) < 0) {
+    return EXIT_FAILURE;
+  }
 
-    // More than one file provided
-    if (argc - optind > 1) {
-        PrintUsage(argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    const char *pathname = (optind < argc) ? argv[optind] : ".";
-    if (du(pathname) < 0) {
-        return EXIT_FAILURE;
-    }
-
-    return EXIT_SUCCESS;
+  return EXIT_SUCCESS;
 }
 
 // Calculates the disk usage of a directory or file.
 //
-// Initiates the calculation of disk usage starting from the specified root 
+// Initiates the calculation of disk usage starting from the specified root
 // path. It uses a depth-first search algorithm, managed by the 'dfs' function,
 // to traverse directories and files. A dynamic array is utilized to keep track
 // of seen inodes, preventing the double counting of hard links.
@@ -81,28 +81,30 @@ int main(int argc, char *argv[]) {
 // Args:
 //   rootpath: A pointer to a char array containing the path of the directory
 //             or file from which to start the disk usage calculation.
+//   include_files: Integer flag used to determine whether to print all file
+//                  types.
 //
 // Returns:
 //   0 on successful calculation and -1 if an error occurs, with the specific
 //   error reported to stderr via perror.
-int du(const char *rootpath) {
-    int error = 0;
-    const size_t kInitSize = 8;
+int du(const char *rootpath, int include_files) {
+  int error = 0;
+  const size_t kInitSize = 8;
 
-    DynamicArray *seen = InitDynamicArray(kInitSize, sizeof(ino_t));
-    if (!seen) {
-        perror("failed to initialize dynamic array");
-        return -1;
-    }
+  DynamicArray *seen = InitDynamicArray(kInitSize, sizeof(ino_t));
+  if (!seen) {
+    perror("failed to initialize dynamic array");
+    return -1;
+  }
 
-    dfs(rootpath, seen, &error);
-    FreeDynamicArray(seen);
+  dfs(rootpath, seen, &error, include_files);
+  FreeDynamicArray(seen);
 
-    if (error) {
-        return -1;
-    }
+  if (error) {
+    return -1;
+  }
 
-    return 0;
+  return 0;
 }
 
 // Performs a depth-first search to calculate disk usage.
@@ -114,92 +116,97 @@ int du(const char *rootpath) {
 // Args:
 //   rootpath: A pointer to a char array that contains the path of the
 //             directory or file to calculate disk usage for.
+//   seen: A pointer to the dynamic array used for keeping track of seen
+//         i-nodes with multiple links.
 //   error: A pointer to an int that will be updated with the error code
 //          (errno) if an error occurs during disk usage calculation.
+//   include_files: Integer flag used to determine whether to print all file
+//                  types.
 //
 // Returns:
-//   The total disk usage in kilobytes (KB) of the directory or file
-//   specified by `rootpath`. Returns 0 and sets `error` if an error occurs.
-blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error) {
-    struct stat statbuf;
-    blkcnt_t disk_usage_kb;
-    blkcnt_t total = 0;
+//   The total disk usage in kilobytes (KB) of the directory or file specified
+//   by `rootpath`. Returns 0 and sets `error` if an error occurs.
+blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error,
+             int include_files) {
+  struct stat statbuf;
+  blkcnt_t disk_usage_kb;
+  blkcnt_t total = 0;
 
-    if (lstat(rootpath, &statbuf) < 0) {
-        fprintf(stderr, "failed to get stat for '%s'\n", rootpath);
-        *error = errno;
-        return 0;
+  if (lstat(rootpath, &statbuf) < 0) {
+    fprintf(stderr, "failed to get stat for '%s'\n", rootpath);
+    *error = errno;
+    return 0;
+  }
+
+  disk_usage_kb = statbuf.st_blocks / 2;
+
+  // Handle case where `rootpath` is a regular file
+  if (!S_ISDIR(statbuf.st_mode)) {
+    PrintDiskUsage(disk_usage_kb, rootpath);
+    return disk_usage_kb;
+  } else {
+    total += disk_usage_kb;
+  }
+
+  DIR *dirp = opendir(rootpath);
+  if (!dirp) {
+    fprintf(stderr, "failed to open directory '%s'\n", rootpath);
+    *error = errno;
+    return 0;
+  }
+
+  struct dirent *direntp;
+  while ((direntp = readdir(dirp))) {
+    // Avoid infinite loop during traversal
+    if (!strcmp(direntp->d_name, ".") || !strcmp(direntp->d_name, "..")) {
+      continue;
+    }
+
+    char pathname[kPathMax];
+    if (snprintf(pathname, kPathMax, "%s/%s", rootpath, direntp->d_name) < 0) {
+      perror("failed to concatenate root path to filename");
+      *error = errno;
+      break;
+    }
+
+    if (lstat(pathname, &statbuf) < 0) {
+      fprintf(stderr, "failed to retrieve stat on '%s'\n", strerror(errno));
+      *error = errno;
+      break;
     }
 
     disk_usage_kb = statbuf.st_blocks / 2;
+    if (S_ISDIR(statbuf.st_mode)) {
+      total += dfs(pathname, seen, error, include_files);
+      if (*error) {
+        break;
+      }
+    } else if (S_ISREG(statbuf.st_mode)) {
+      if (statbuf.st_nlink > 1) {
+        if (SearchInode(seen, statbuf.st_ino)) {
+          // I-node already accounted for, so ignore hardlink
+          continue;
+        }
 
-    // Handle case where `rootpath` is a regular file
-    if (!S_ISDIR(statbuf.st_mode)) {
-        PrintDiskUsage(disk_usage_kb, rootpath);
-        return disk_usage_kb;
-    } else {
-        total += disk_usage_kb;
+        if (InsertInode(seen, statbuf.st_ino) < 0) {
+          fprintf(stderr, "failed to insert inode '%lu'\n", statbuf.st_ino);
+          *error = errno;
+          break;
+        }
+      }
+      total += disk_usage_kb;
     }
 
-    DIR *dirp = opendir(rootpath);
-    if (!dirp) {
-        fprintf(stderr, "failed to open directory '%s'\n", rootpath);
-        *error = errno;
-        return 0;
+    if (include_files && !S_ISDIR(statbuf.st_mode)) {
+      PrintDiskUsage(disk_usage_kb, pathname);
     }
+  }
+  closedir(dirp);
 
-    struct dirent *direntp;
-    while ((direntp = readdir(dirp))) {
-        // Avoid infinite loop during traversal
-        if (!strcmp(direntp->d_name, ".") || !strcmp(direntp->d_name,"..")) {
-            continue;
-        }
-
-        char pathname[kPathMax];
-        if (snprintf(pathname, kPathMax, "%s/%s", rootpath, direntp->d_name) < 0) {
-            perror("failed to concatenate root path to filename");
-            *error = errno;
-            break;
-        }
-
-        if (lstat(pathname, &statbuf) < 0) {
-            fprintf(stderr, "failed to retrieve stat on '%s'\n", strerror(errno));
-            *error = errno;
-            break;
-        }
-
-        disk_usage_kb = statbuf.st_blocks / 2;
-        if (S_ISDIR(statbuf.st_mode)) {
-            total += dfs(pathname, seen, error);
-            if (*error) {
-                break;
-            }
-        } else if (S_ISREG(statbuf.st_mode)) {
-            if (statbuf.st_nlink > 1) {
-                if (SearchInode(seen, statbuf.st_ino)) {
-                    // I-node already accounted for, so ignore hardlink
-                    continue;
-                }
-
-                if (InsertInode(seen, statbuf.st_ino) < 0) {
-                    fprintf(stderr, "failed to insert inode '%lu'\n", statbuf.st_ino);
-                    *error = errno;
-                    break;
-                }
-            }
-            total += disk_usage_kb;
-        }
-
-        if (include_files && !S_ISDIR(statbuf.st_mode)) {
-            PrintDiskUsage(disk_usage_kb, pathname);
-        }
-    }
-    closedir(dirp);
-
-    if (!(*error)) {
-        PrintDiskUsage(total, rootpath);
-    }
-    return total;
+  if (!(*error)) {
+    PrintDiskUsage(total, rootpath);
+  }
+  return total;
 }
 
 // Initializes a dynamic array.
@@ -217,21 +224,21 @@ blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error) {
 //   A pointer to the initialized DynamicArray structure, or NULL if memory
 //   allocation fails.
 DynamicArray *InitDynamicArray(size_t size, size_t type_size) {
-    DynamicArray *da = malloc(sizeof(DynamicArray));
-    if (!da) {
-        perror("malloc failed on struct allocation");
-        return NULL;
-    }
-    
-    da->size = size;
-    da->len = 0;
-    da->data = malloc(size * type_size);
-    if (!da->data) {
-        free(da);
-        perror("malloc failed on array allocation");
-        return NULL;
-    }
-    return da;
+  DynamicArray *da = malloc(sizeof(DynamicArray));
+  if (!da) {
+    perror("malloc failed on struct allocation");
+    return NULL;
+  }
+
+  da->size = size;
+  da->len = 0;
+  da->data = malloc(size * type_size);
+  if (!da->data) {
+    free(da);
+    perror("malloc failed on array allocation");
+    return NULL;
+  }
+  return da;
 }
 
 // Frees a dynamic array.
@@ -243,12 +250,12 @@ DynamicArray *InitDynamicArray(size_t size, size_t type_size) {
 // Args:
 //   da: A pointer to the DynamicArray to be freed.
 void FreeDynamicArray(DynamicArray *da) {
-    if (da) {
-        if (da->data) {
-            free(da->data);
-        }
-        free(da);
+  if (da) {
+    if (da->data) {
+      free(da->data);
     }
+    free(da);
+  }
 }
 
 // Searches for an inode in a dynamic array.
@@ -265,20 +272,20 @@ void FreeDynamicArray(DynamicArray *da) {
 //   A pointer to the found inode within the dynamic array, or NULL if the
 //   inode is not found or if the dynamic array pointer is NULL.
 ino_t *SearchInode(DynamicArray *da, ino_t ino) {
-    if (!da) {
-        return NULL;
-    }
-    
-    size_t i = 0;
-    ino_t *inodes = (ino_t *) da->data;
-
-    while (i < da->len) {
-        if (inodes[i] == ino) {
-            return &inodes[i];
-        }
-        i++;
-    }
+  if (!da) {
     return NULL;
+  }
+
+  size_t i = 0;
+  ino_t *inodes = (ino_t *)da->data;
+
+  while (i < da->len) {
+    if (inodes[i] == ino) {
+      return &inodes[i];
+    }
+    i++;
+  }
+  return NULL;
 }
 
 // Inserts an inode into a dynamic array.
@@ -295,21 +302,21 @@ ino_t *SearchInode(DynamicArray *da, ino_t ino) {
 //   0 on successful insertion, or -1 if realloc fails to allocate additional
 //   memory.
 int InsertInode(DynamicArray *da, ino_t ino) {
-    if (da->size == da->len) {
-        void *dummy = realloc(da->data, da->size * 2);
-        if (!dummy) {
-            // Cleanup is taken care of by caller
-            return -1;
-        }
-
-        da->data = dummy;
-        da->size *= 2;
+  if (da->size == da->len) {
+    void *dummy = realloc(da->data, da->size * 2);
+    if (!dummy) {
+      // Cleanup is taken care of by caller
+      return -1;
     }
-    ino_t *inodes = (ino_t *) da->data;
-    inodes[da->len] = ino;
-    da->len++;
 
-    return 0;
+    da->data = dummy;
+    da->size *= 2;
+  }
+  ino_t *inodes = (ino_t *)da->data;
+  inodes[da->len] = ino;
+  da->len++;
+
+  return 0;
 }
 
 // Prints the usage message for the program.
@@ -318,9 +325,10 @@ int InsertInode(DynamicArray *da, ino_t ino) {
 //   cmd: A pointer to a C-string containing the name of the command or
 //        program being executed.
 static inline void PrintUsage(const char *cmd) {
-    fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "    -a    write counts for all files, not just directories\n");
+  fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
+  fprintf(stderr, "Options:\n");
+  fprintf(stderr,
+          "    -a    write counts for all files, not just directories\n");
 }
 
 // Prints the disk usage of a file or directory.
@@ -333,5 +341,5 @@ static inline void PrintUsage(const char *cmd) {
 //   path: A pointer to a C-string containing the path of the file or
 //         directory whose disk usage is being reported.
 static inline void PrintDiskUsage(blkcnt_t disk_usage, const char *path) {
-    printf("%ld\t%s\n", disk_usage, path);
+  printf("%ld\t%s\n", disk_usage, path);
 }
