@@ -5,25 +5,35 @@
 //         Supports the `-a` option to include files in the usage report, not
 //         just directories.
 
-#include <stdio.h>    // fprintf, printf, snprintf
-#include <dirent.h>   // opendir, readdir, closedir, dirent
-#include <sys/stat.h> // lstat, stat, S_IFMT, S_IFDIR, S_IFREG
-#include <stdlib.h>   // EXIT_FAILURE, EXIT_SUCCESS
-#include <string.h>   // strerror, strcmp
-#include <unistd.h>   // getopt, optind
-#include <limits.h>   // PATH_MAX
-#include <errno.h>    // errno
-#include <stdint.h>   // uint64_t
+#include <stdio.h>     // fprintf, printf, snprintf
+#include <dirent.h>    // opendir, readdir, closedir, dirent
+#include <sys/types.h> // ino_t
+#include <sys/stat.h>  // lstat, stat, S_IFMT, S_IFDIR, S_IFREG
+#include <stdlib.h>    // EXIT_FAILURE, EXIT_SUCCESS
+#include <string.h>    // strerror, strcmp
+#include <unistd.h>    // getopt, optind
+#include <errno.h>     // errno
 
 extern int optind;
 
+static const size_t kPathMax = 512;  // bytes
 static const int kMaxArgs = 3;
 static int include_files = 0;
 
+typedef struct DynamicArray {
+    size_t size;
+    size_t len;
+    void *data;
+} DynamicArray;
+
 int du(const char *rootpath);
-uint64_t dfs(const char *rootpath, int *error);
+blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error);
+DynamicArray *InitDynamicArray(size_t size, size_t type_size);
+void FreeDynamicArray(DynamicArray *da);
+ino_t *SearchInode(DynamicArray *da, ino_t ino);
+int InsertInode(DynamicArray *da, ino_t ino);
 static inline void PrintUsage(const char *cmd);
-static inline void PrintDiskUsage(uint64_t disk_usage, const char *path);
+static inline void PrintDiskUsage(blkcnt_t disk_usage, const char *path);
 
 // Parses command-line arguments and calls the `du` function accordingly.
 int main(int argc, char *argv[]) {
@@ -57,29 +67,38 @@ int main(int argc, char *argv[]) {
     if (du(pathname) < 0) {
         return EXIT_FAILURE;
     }
-    
+
     return EXIT_SUCCESS;
 }
 
 // Calculates the disk usage of a directory or file.
 //
-// This function computes the disk usage of the directory or file specified
-// by `rootpath`. It logs an error message to stderr if it encounters an error
-// during the calculation.
+// Initiates the calculation of disk usage starting from the specified root 
+// path. It uses a depth-first search algorithm, managed by the 'dfs' function,
+// to traverse directories and files. A dynamic array is utilized to keep track
+// of seen inodes, preventing the double counting of hard links.
 //
 // Args:
-//   rootpath: A pointer to a char array that contains the path of the
-//             directory or file whose disk usage is to be calculated.
+//   rootpath: A pointer to a char array containing the path of the directory
+//             or file from which to start the disk usage calculation.
 //
 // Returns:
-//   An integer indicating the success or failure of the operation:
-//   0 on success, -1 on failure.
+//   0 on successful calculation and -1 if an error occurs, with the specific
+//   error reported to stderr via perror.
 int du(const char *rootpath) {
     int error = 0;
-    dfs(rootpath, &error);
+    const size_t kInitSize = 8;
+
+    DynamicArray *seen = InitDynamicArray(kInitSize, sizeof(ino_t));
+    if (!seen) {
+        perror("failed to initialize dynamic array");
+        return -1;
+    }
+
+    dfs(rootpath, seen, &error);
+    FreeDynamicArray(seen);
 
     if (error) {
-        fprintf(stderr, "%s\n", strerror(error));
         return -1;
     }
 
@@ -89,8 +108,8 @@ int du(const char *rootpath) {
 // Performs a depth-first search to calculate disk usage.
 //
 // Recursively calculates the disk usage of a directory and its contents or
-// a single file. This function is designed to be called by `du` and updates
-// the `error` variable if an error occurs during the calculation.
+// a single file. This function is designed to be called by 'du' and updates
+// the 'error' variable if an error occurs during the calculation.
 //
 // Args:
 //   rootpath: A pointer to a char array that contains the path of the
@@ -101,18 +120,19 @@ int du(const char *rootpath) {
 // Returns:
 //   The total disk usage in kilobytes (KB) of the directory or file
 //   specified by `rootpath`. Returns 0 and sets `error` if an error occurs.
-uint64_t dfs(const char *rootpath, int *error) {
-    struct stat statbuf;    
-    uint64_t disk_usage_kb;
-    uint64_t total = 0;
+blkcnt_t dfs(const char *rootpath, DynamicArray *seen, int *error) {
+    struct stat statbuf;
+    blkcnt_t disk_usage_kb;
+    blkcnt_t total = 0;
 
     if (lstat(rootpath, &statbuf) < 0) {
+        fprintf(stderr, "failed to get stat for '%s'\n", rootpath);
         *error = errno;
         return 0;
     }
 
     disk_usage_kb = statbuf.st_blocks / 2;
-    
+
     // Handle case where `rootpath` is a regular file
     if (!S_ISDIR(statbuf.st_mode)) {
         PrintDiskUsage(disk_usage_kb, rootpath);
@@ -120,9 +140,10 @@ uint64_t dfs(const char *rootpath, int *error) {
     } else {
         total += disk_usage_kb;
     }
-    
+
     DIR *dirp = opendir(rootpath);
     if (!dirp) {
+        fprintf(stderr, "failed to open directory '%s'\n", rootpath);
         *error = errno;
         return 0;
     }
@@ -134,35 +155,161 @@ uint64_t dfs(const char *rootpath, int *error) {
             continue;
         }
 
-        char pathname[PATH_MAX];
-        if (snprintf(pathname, PATH_MAX, "%s/%s", rootpath, direntp->d_name) < 0) {
+        char pathname[kPathMax];
+        if (snprintf(pathname, kPathMax, "%s/%s", rootpath, direntp->d_name) < 0) {
+            perror("failed to concatenate root path to filename");
             *error = errno;
             break;
         }
 
         if (lstat(pathname, &statbuf) < 0) {
+            fprintf(stderr, "failed to retrieve stat on '%s'\n", strerror(errno));
             *error = errno;
             break;
         }
 
         disk_usage_kb = statbuf.st_blocks / 2;
         if (S_ISDIR(statbuf.st_mode)) {
-            total += dfs(pathname, error);
+            total += dfs(pathname, seen, error);
             if (*error) {
                 break;
             }
         } else if (S_ISREG(statbuf.st_mode)) {
+            if (statbuf.st_nlink > 1) {
+                if (SearchInode(seen, statbuf.st_ino)) {
+                    // I-node already accounted for, so ignore hardlink
+                    continue;
+                }
+
+                if (InsertInode(seen, statbuf.st_ino) < 0) {
+                    fprintf(stderr, "failed to insert inode '%lu'\n", statbuf.st_ino);
+                    *error = errno;
+                    break;
+                }
+            }
             total += disk_usage_kb;
         }
-        
+
         if (include_files && !S_ISDIR(statbuf.st_mode)) {
             PrintDiskUsage(disk_usage_kb, pathname);
         }
     }
     closedir(dirp);
-    
-    PrintDiskUsage(total, rootpath);
+
+    if (!(*error)) {
+        PrintDiskUsage(total, rootpath);
+    }
     return total;
+}
+
+// Initializes a dynamic array.
+//
+// Allocates memory for a DynamicArray structure and its data array, based
+// on the specified initial size and the size of each element. If memory
+// allocation fails at any step, the function cleans up any allocated memory
+// and returns NULL.
+//
+// Args:
+//   size: The initial number of elements in the dynamic array.
+//   type_size: The size (in bytes) of each element in the dynamic array.
+//
+// Returns:
+//   A pointer to the initialized DynamicArray structure, or NULL if memory
+//   allocation fails.
+DynamicArray *InitDynamicArray(size_t size, size_t type_size) {
+    DynamicArray *da = malloc(sizeof(DynamicArray));
+    if (!da) {
+        perror("malloc failed on struct allocation");
+        return NULL;
+    }
+    
+    da->size = size;
+    da->len = 0;
+    da->data = malloc(size * type_size);
+    if (!da->data) {
+        free(da);
+        perror("malloc failed on array allocation");
+        return NULL;
+    }
+    return da;
+}
+
+// Frees a dynamic array.
+//
+// Deallocates the memory allocated for the dynamic array's data and the
+// DynamicArray structure itself. It's safe to call this function with a NULL
+// pointer.
+//
+// Args:
+//   da: A pointer to the DynamicArray to be freed.
+void FreeDynamicArray(DynamicArray *da) {
+    if (da) {
+        if (da->data) {
+            free(da->data);
+        }
+        free(da);
+    }
+}
+
+// Searches for an inode in a dynamic array.
+//
+// Iterates over the elements of the dynamic array to find the first instance
+// of the specified inode. If found, returns a pointer to the inode within
+// the array.
+//
+// Args:
+//   da: A pointer to the DynamicArray to search.
+//   ino: The inode number to search for.
+//
+// Returns:
+//   A pointer to the found inode within the dynamic array, or NULL if the
+//   inode is not found or if the dynamic array pointer is NULL.
+ino_t *SearchInode(DynamicArray *da, ino_t ino) {
+    if (!da) {
+        return NULL;
+    }
+    
+    size_t i = 0;
+    ino_t *inodes = (ino_t *) da->data;
+
+    while (i < da->len) {
+        if (inodes[i] == ino) {
+            return &inodes[i];
+        }
+        i++;
+    }
+    return NULL;
+}
+
+// Inserts an inode into a dynamic array.
+//
+// Adds a new inode to the dynamic array. If the array is full, it attempts
+// to double its size using realloc. If realloc fails, the function returns
+// an error code, and cleanup is expected to be handled by the caller.
+//
+// Args:
+//   da: A pointer to the DynamicArray where the inode is to be inserted.
+//   ino: The inode number to insert.
+//
+// Returns:
+//   0 on successful insertion, or -1 if realloc fails to allocate additional
+//   memory.
+int InsertInode(DynamicArray *da, ino_t ino) {
+    if (da->size == da->len) {
+        void *dummy = realloc(da->data, da->size * 2);
+        if (!dummy) {
+            // Cleanup is taken care of by caller
+            return -1;
+        }
+
+        da->data = dummy;
+        da->size *= 2;
+    }
+    ino_t *inodes = (ino_t *) da->data;
+    inodes[da->len] = ino;
+    da->len++;
+
+    return 0;
 }
 
 // Prints the usage message for the program.
@@ -185,6 +332,6 @@ static inline void PrintUsage(const char *cmd) {
 //   disk_usage: The disk usage in kilobytes (KB) of the file or directory.
 //   path: A pointer to a C-string containing the path of the file or
 //         directory whose disk usage is being reported.
-static inline void PrintDiskUsage(uint64_t disk_usage, const char *path) {
+static inline void PrintDiskUsage(blkcnt_t disk_usage, const char *path) {
     printf("%ld\t%s\n", disk_usage, path);
 }
