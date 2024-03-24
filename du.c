@@ -1,13 +1,32 @@
-// du.c
-//
-// Author: Juan Diego Becerra (jdb9056@nyu.edu)
-// Brief:  Basic implementation of a disk usage reporting tool similar to 'du'
-//         command. Supports the `-a` option to include files in the usage
-//         report, not just directories.
+/**
+ * @file   du.c
+ *
+ * @brief  Basic implementation of a disk usage reporting tool similar to 'du'
+ *         command. This program only supports the `-a` option to include files
+ *         in the usage report, not just directories.
+ *
+ * @author Juan Diego Becerra (jdb9056@nyu.edu)
+ * @date   03-24-2024
+ */
 
 #include "du.h"
 
-// Parses command-line arguments and calls the `du` function accordingly.
+/**
+ * @brief Orchestrates the disk usage calculation process.
+ *
+ * Parses and validates command line arguments as specified in the usage. Only
+ * one path argument is allowed; if not provided, the current directory (".")
+ * is used as the default. The function then calls `du` to calculate and report
+ * the disk usage starting from the specified path or current directory. Errors
+ * during disk usage calculation also result in an exit with failure.
+ *
+ * @param argc Number of command line arguments.
+ * @param argv Array of command line arguments.
+ *
+ * @return Returns EXIT_SUCCESS on successful completion of disk usage
+ *         calculation, or EXIT_FAILURE on error, such as invalid arguments or
+ *         failure in disk usage calculation.
+ */
 int main(int argc, char* argv[]) {
   if (argc > kMaxArgs) {
     PrintUsage(argv[0]);
@@ -43,22 +62,21 @@ int main(int argc, char* argv[]) {
   return EXIT_SUCCESS;
 }
 
-// Calculates the disk usage of a directory or file.
-//
-// Initiates the calculation of disk usage starting from the specified root
-// path. It uses a depth-first search algorithm, managed by the 'dfs' function,
-// to traverse directories and files. A dynamic array is utilized to keep track
-// of seen inodes, preventing the double counting of hard links.
-//
-// Args:
-//   rootpath: A pointer to a char array containing the path of the directory
-//             or file from which to start the disk usage calculation.
-//   include_files: Integer flag used to determine whether to print all file
-//                  types.
-//
-// Returns:
-//   0 on successful calculation and -1 if an error occurs, with the specific
-//   error reported to stderr via perror.
+/**
+ * @brief Calculates the disk usage of the given directory or file.
+ *
+ * Initializes a dynamic array to track seen inodes to avoid counting hard
+ * links multiple times. It performs a depth-first search (DFS) to recursively
+ * calculate the disk usage of the directory and its contents, optionally
+ * including files if specified.
+ *
+ * @param rootpath      The path to the directory or file whose disk usage is to
+ *                      be calculated.
+ * @param include_files Flag indicating whether to include files in the usage
+ *                      calculation.
+ *
+ * @return Returns 0 on success or -1 on error.
+ */
 int du(const char* rootpath, int include_files) {
   int error = 0;
   const size_t kInitSize = 8;
@@ -79,25 +97,24 @@ int du(const char* rootpath, int include_files) {
   return 0;
 }
 
-// Performs a depth-first search to calculate disk usage.
-//
-// Recursively calculates the disk usage of a directory and its contents or
-// a single file. This function is designed to be called by 'du' and updates
-// the 'error' variable if an error occurs during the calculation.
-//
-// Args:
-//   rootpath: A pointer to a char array that contains the path of the
-//             directory or file to calculate disk usage for.
-//   seen: A pointer to the dynamic array used for keeping track of seen
-//         i-nodes with multiple links.
-//   error: A pointer to an int that will be updated with the error code
-//          (errno) if an error occurs during disk usage calculation.
-//   include_files: Integer flag used to determine whether to print all file
-//                  types.
-//
-// Returns:
-//   The total disk usage in kilobytes (KB) of the directory or file specified
-//   by `rootpath`. Returns 0 and sets `error` if an error occurs.
+/**
+ * @brief Performs a depth-first search to calculate disk usage.
+ *
+ * Recursively calculates the disk usage of a directory and its contents or
+ * a single file. This function is designed to be called by 'du' and updates
+ * the 'error' variable if an error occurs during the calculation.
+ *
+ * @param rootpath      The directory or file path to calculate usage for.
+ * @param seen          Dynamic array to keep track of seen inodes to handle
+ *                      hard links.
+ * @param error         Pointer to an integer to record any errors encountered
+ *                      during execution.
+ * @param include_files Flag indicating whether to include files in the usage
+ *                      calculation.
+ *
+ * @return Returns the total disk usage in kilobytes of the specified path and
+ *         its contents, or 0 if an error is encountered.
+ */
 blkcnt_t dfs(const char* rootpath, DynamicArray* seen, int* error,
              int include_files) {
   struct stat statbuf;
@@ -118,8 +135,9 @@ blkcnt_t dfs(const char* rootpath, DynamicArray* seen, int* error,
       if (SearchInode(seen, ino)) {
         return 0;
       }
+
       if (InsertInode(seen, ino) < 0) {
-        fprintf(stderr, "Error: Failed to record inode '%lu'.\n",
+        fprintf(stderr, "Error: Unable to insert inode '%lu'. Resizing failed.\n",
                 statbuf.st_ino);
         *error = errno;
         return 0;
@@ -169,20 +187,15 @@ blkcnt_t dfs(const char* rootpath, DynamicArray* seen, int* error,
   return total;
 }
 
-// Initializes a dynamic array.
-//
-// Allocates memory for a DynamicArray structure and its data array, based
-// on the specified initial size and the size of each element. If memory
-// allocation fails at any step, the function cleans up any allocated memory
-// and returns NULL.
-//
-// Args:
-//   size: The initial number of elements in the dynamic array.
-//   type_size: The size (in bytes) of each element in the dynamic array.
-//
-// Returns:
-//   A pointer to the initialized DynamicArray structure, or NULL if memory
-//   allocation fails.
+/**
+ * @brief Initializes a dynamic array to store inode numbers.
+ *
+ * @param size      Initial size of the dynamic array.
+ * @param type_size Data type of elements to be stored in the array.
+ *
+ * @return Returns a pointer to the initialized DynamicArray, or NULL if the
+ *         initialization fails.
+ */
 DynamicArray* InitDynamicArray(size_t size, size_t type_size) {
   DynamicArray* da = malloc(sizeof(DynamicArray));
   if (!da) {
@@ -195,20 +208,16 @@ DynamicArray* InitDynamicArray(size_t size, size_t type_size) {
   da->data = malloc(size * type_size);
   if (!da->data) {
     free(da);
-    perror("malloc failed on array allocation");
     return NULL;
   }
   return da;
 }
 
-// Frees a dynamic array.
-//
-// Deallocates the memory allocated for the dynamic array's data and the
-// DynamicArray structure itself. It's safe to call this function with a NULL
-// pointer.
-//
-// Args:
-//   da: A pointer to the DynamicArray to be freed.
+/**
+ * @brief Frees the memory allocated for a DynamicArray.
+ *
+ * @param da Pointer to the DynamicArray to be freed.
+ */
 void FreeDynamicArray(DynamicArray* da) {
   if (da) {
     if (da->data) {
@@ -218,19 +227,15 @@ void FreeDynamicArray(DynamicArray* da) {
   }
 }
 
-// Searches for an inode in a dynamic array.
-//
-// Iterates over the elements of the dynamic array to find the first instance
-// of the specified inode. If found, returns a pointer to the inode within
-// the array.
-//
-// Args:
-//   da: A pointer to the DynamicArray to search.
-//   ino: The inode number to search for.
-//
-// Returns:
-//   A pointer to the found inode within the dynamic array, or NULL if the
-//   inode is not found or if the dynamic array pointer is NULL.
+/**
+ * @brief Searches for an inode in a DynamicArray.
+ *
+ * @param da  Pointer to the DynamicArray to search.
+ * @param ino Inode number to search for.
+ *
+ * @return Returns a pointer to the inode if found, or NULL if not found or if
+ *         the DynamicArray is NULL.
+ */
 ino_t* SearchInode(DynamicArray* da, ino_t ino) {
   if (!da) {
     return NULL;
@@ -248,19 +253,15 @@ ino_t* SearchInode(DynamicArray* da, ino_t ino) {
   return NULL;
 }
 
-// Inserts an inode into a dynamic array.
-//
-// Adds a new inode to the dynamic array. If the array is full, it attempts
-// to double its size using realloc. If realloc fails, the function returns
-// an error code, and cleanup is expected to be handled by the caller.
-//
-// Args:
-//   da: A pointer to the DynamicArray where the inode is to be inserted.
-//   ino: The inode number to insert.
-//
-// Returns:
-//   0 on successful insertion, or -1 if realloc fails to allocate additional
-//   memory.
+/**
+ * @brief Inserts an inode into a DynamicArray, resizing the array if necessary.
+ *
+ * @param da  Pointer to the DynamicArray where the inode should be inserted.
+ * @param ino Inode number to insert.
+ *
+ * @return Returns 0 on successful insertion, or -1 if the array could not be
+ *         resized.
+ */
 int InsertInode(DynamicArray* da, ino_t ino) {
   if (da->size == da->len) {
     void* dummy = realloc(da->data, da->size * 2);
@@ -279,11 +280,11 @@ int InsertInode(DynamicArray* da, ino_t ino) {
   return 0;
 }
 
-// Prints the usage message for the program.
-//
-// Args:
-//   cmd: A pointer to a C-string containing the name of the command or
-//        program being executed.
+/**
+ * @brief Prints usage information for the program.
+ *
+ * @param cmd The name of the command to display in the usage information.
+ */
 static inline void PrintUsage(const char* cmd) {
   fprintf(stderr, "Usage: %s [-a] [FILE]\n", cmd);
   fprintf(stderr, "Options:\n");
@@ -291,15 +292,12 @@ static inline void PrintUsage(const char* cmd) {
           "    -a    write counts for all files, not just directories\n");
 }
 
-// Prints the disk usage of a file or directory.
-//
-// Outputs the disk usage in kilobytes (KB) and the path of the file or
-// directory to stdout.
-//
-// Args:
-//   disk_usage: The disk usage in kilobytes (KB) of the file or directory.
-//   path: A pointer to a C-string containing the path of the file or
-//         directory whose disk usage is being reported.
+/**
+ * @brief  Prints the disk usage of a file or directory in kilobytes.
+ *
+ * @param disk_usage Disk usage in kilobytes.
+ * @param path       Path of the directory or file.
+ */
 static inline void PrintDiskUsage(blkcnt_t disk_usage, const char* path) {
   printf("%ld\t%s\n", disk_usage, path);
 }
