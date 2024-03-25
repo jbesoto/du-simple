@@ -264,7 +264,7 @@ ino_t* SearchInode(DynamicArray* da, ino_t ino) {
  */
 int InsertInode(DynamicArray* da, ino_t ino) {
   if (da->size == da->len) {
-    void* dummy = realloc(da->data, da->size * 2);
+    void* dummy = realloc(da->data, (da->size * 2) * sizeof(ino_t));
     if (!dummy) {
       // Cleanup is taken care of by caller
       return -1;
